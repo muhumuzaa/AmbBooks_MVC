@@ -1,4 +1,4 @@
-namespace AmbBooks.Models
+namespace Amb.Models
 {
     public class ErrorViewModel
     {
