@@ -122,7 +122,7 @@ namespace AmbBooks.Areas.Admin.Controllers
             return Json(new { data = objProductList });
         }
 
-        [HttpGet]
+        [HttpDelete]
         public IActionResult Delete(int? id)
         {
             var productToBeDeleted = _unitOfWork.Product.Get(u=>u.Id == id);
