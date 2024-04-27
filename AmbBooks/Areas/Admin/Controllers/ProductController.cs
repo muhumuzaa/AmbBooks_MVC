@@ -1,101 +1,146 @@
-﻿using Amb.DataAccess.Repository.IRepository;
+﻿using Amb.DataAccess.Data;
+using Amb.DataAccess.Repository.IRepository;
 using Amb.Models;
+using Amb.Models.ViewModels;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Rendering;
+using System.Collections.Generic;
 
 namespace AmbBooks.Areas.Admin.Controllers
 {
+    [Area("Admin")]
     public class ProductController : Controller
     {
         private readonly IUnitOfWork _unitOfWork;
-
-        public ProductController(IUnitOfWork unitOfWork)
+        private readonly IWebHostEnvironment _webHostEnvironment;
+        public ProductController(IUnitOfWork unitOfWork, IWebHostEnvironment webHostEnvironment)
         {
             _unitOfWork = unitOfWork;
+            _webHostEnvironment = webHostEnvironment;
 
-        }
+		}
         public IActionResult Index()
         {
-            List<Product> objProducctList = _unitOfWork.Product.GetAll().ToList();
-            return View(objProducctList);
+            //get a list of all products from the database
+            List<Product> objProductList = _unitOfWork.Product.GetAll(includeProperties:"Category").ToList();
+
+            
+
+            return View(objProductList);
         }
 
-        public IActionResult Create()
+        public IActionResult Upsert(int? id)
         {
-            return View();
+            ProductVM productVM = new()
+            {
+                CategoryList = _unitOfWork.Category.GetAll().Select(u => new SelectListItem //we return a new object of type SelectListItem: 
+				{
+					//from each selectListItem/Category object retrieved, we get the name & Id
+					Text = u.Name,
+					Value = u.Id.ToString()
+				}),
+                Product = new Product()
+            };
+            if(id==null || id == 0) //means its a create 
+            {
+				return View(productVM);
+            }
+            else
+            {
+                //update a product
+                productVM.Product = _unitOfWork.Product.Get(u => u.Id == id);
+                return View(productVM);
+            }
+            
         }
         [HttpPost]
-        public IActionResult Create(Product obj)
+        public IActionResult Upsert(ProductVM productVM, IFormFile? file)
         {
             if (ModelState.IsValid)
             {
-                _unitOfWork.Product.Add(obj);
-                _unitOfWork.Save();
-                TempData["Success"] = "Product Added Successfully";
+                string wwwRootPath = _webHostEnvironment.WebRootPath;
+                if(file != null)
+                {
+                    string fileName = Guid.NewGuid().ToString() + Path.GetExtension(file.FileName);
+                    string productPath = Path.Combine(wwwRootPath, @"images\product");
+
+                    if (!string.IsNullOrEmpty(productVM.Product.ImageUrl))
+                    {
+                        //delete the old image
+                        var oldImagePath = Path.Combine(wwwRootPath, productVM.Product.ImageUrl.TrimStart('\\'));
+                        if (System.IO.File.Exists(oldImagePath))
+                        {
+                            System.IO.File.Delete(oldImagePath);
+                        }
+                    }
+
+                    using (var fileStream = new FileStream(Path.Combine(productPath, fileName), FileMode.Create))
+                    {
+                        file.CopyTo(fileStream);
+                    }
+                    productVM.Product.ImageUrl = @"\images\product\" + fileName;
+                }
+
+                if(productVM.Product.Id == 0)
+                {
+					_unitOfWork.Product.Add(productVM.Product); //add the category object to the category table.
+				}
+                else
+                {
+					_unitOfWork.Product.Update(productVM.Product); //add the category object to the category table.
+				}
+                
+                _unitOfWork.Save(); //go to database and add these changes.
+                TempData["Success"] = "Category created successfully";
                 return RedirectToAction("Index");
             }
-            return View();
+            else
+            {
+
+				productVM.CategoryList = _unitOfWork.Category.GetAll().Select(u => new SelectListItem //we return a new object of type SelectListItem: 
+                {
+                    //from each selectListItem/Category object retrieved, we get the name & Id
+                    Text = u.Name,
+                    Value = u.Id.ToString()
+                });
+					
+				
+
+			
+				return View(productVM);
+
+			}
+            
+
+        }
+    
+        #region API CALLS
+        [HttpGet]
+        public IActionResult GetAll()
+        {
+            List<Product> objProductList = _unitOfWork.Product.GetAll(includeProperties: "Category").ToList();
+            return Json(new { data = objProductList });
         }
 
-        public IActionResult Edit(int? id) 
-        { 
-            //check if Id is valid
-            if(id == null || id == 0)
-            {
-                return NotFound();
-            }
-            //if Id is valid, fetch the product from the database
-            Product prodFromDb = _unitOfWork.Product.Get(u => u.Id == id);
-            if(prodFromDb == null)
-            {
-                return NotFound();
-            }
-            return View(prodFromDb);
-        }
-        [HttpPost]
-        public IActionResult Edit(Product obj) 
+        [HttpGet]
+        public IActionResult Delete(int? id)
         {
-            if (ModelState.IsValid)
+            var productToBeDeleted = _unitOfWork.Product.Get(u=>u.Id == id);
+            if(productToBeDeleted == null)
             {
-                _unitOfWork.Product.Update(obj);
-                _unitOfWork.Save();
-                TempData["Success"] = "Product updated successfully";
-                return RedirectToAction("Index");
+                return Json(new { success = false, message = "Error while deleting" });
             }
-            return View();
-        }
+            //delete image from local files
+            var oldImagePath = Path.Combine(_webHostEnvironment.WebRootPath, productToBeDeleted.ImageUrl.TrimStart('\\'));
+            if (System.IO.File.Exists(oldImagePath))
+            {
+                System.IO.File.Delete(oldImagePath);
+            }
+            _unitOfWork.Product.Remove(productToBeDeleted);
+            _unitOfWork.Save();
 
-        public IActionResult Delete(int? id) 
-        {
-            if(id == null || id == 0)
-            {
-                return NotFound();
-            }
-            //else. Create an object of the product and fetch it from the database
-            Product? prodFromDb = _unitOfWork.Product.Get(u => u.Id == id);
-
-            //check returned object isnt empty
-            if(prodFromDb == null)
-            {
-                return NotFound();
-            }
-            return View(prodFromDb);
+            return Json(new { success = true, message = "Delete Successful" });
         }
-        [HttpPost, ActionName("Delete")]
-        public IActionResult DeletePOST(int? id) 
-        {
-            Product? prodFromDb = _unitOfWork.Product.Get(u => u.Id == id);
-            if (prodFromDb == null)
-            {
-                return NotFound();
-            }
-            if (ModelState.IsValid)
-            {
-                _unitOfWork.Product.Remove(prodFromDb);
-                _unitOfWork.Save();
-                TempData["Success"] = "Product Removed Successfully";
-                return RedirectToAction("Index");
-            }
-            return View();
-        }
+        #endregion
     }
 }
